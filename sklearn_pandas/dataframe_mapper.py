@@ -151,14 +151,18 @@ class DataFrameMapper(BaseEstimator, TransformerMixin):
         Return list of columns present in X and not selected explicitly in the
         mapper.
 
-        Unselected columns are returned in the order they appear in the
-        dataframe to avoid issues with different ordering during default fit
-        and transform steps.
+        Fixed: Ensure consistent ordering by sorting unselected columns.
+        This prevents issues with different ordering during default fit
+        and transform steps that can occur with different pandas versions
+        or DataFrame construction methods.
         """
         X_columns = list(X.columns)
-        return [column for column in X_columns if
-                column not in self._selected_columns
-                and column not in self.drop_cols]
+        unselected = [column for column in X_columns if
+                      column not in self._selected_columns
+                      and column not in self.drop_cols]
+        
+        # Sort alphabetically to ensure deterministic behavior
+        return sorted(unselected)
 
     def __setstate__(self, state):
         # compatibility for older versions of sklearn-pandas
@@ -214,6 +218,12 @@ class DataFrameMapper(BaseEstimator, TransformerMixin):
         elif isinstance(X, DataWrapper):
             X = X.df  # fetch underlying data
 
+        # Improved error handling for missing columns
+        if not all(col in X.columns for col in cols):
+            # Find missing columns for better error message
+            missing_cols = [col for col in cols if col not in X.columns]
+            raise KeyError(f"Columns not found in DataFrame: {missing_cols}")
+
         if return_vector:
             t = X[cols[0]]
         else:
@@ -243,7 +253,8 @@ class DataFrameMapper(BaseEstimator, TransformerMixin):
             if transformers is not None:
                 with add_column_names_to_exception(columns):
                     Xt = self._get_col_subset(X, columns, input_df)
-                    _call_fit(transformers.fit, Xt, y)
+                    # Direct call to fit method instead of using _call_fit helper
+                    transformers.fit(Xt, y)
             logger.info(f"[FIT] {columns}: {_elapsed_secs(t1)} secs")
 
         # handle features not explicitly selected
